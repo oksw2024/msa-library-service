@@ -1,15 +1,22 @@
 package com.example.libraryapi.service;
 
-import com.example.libraryapi.dto.LibraryResponse;
-import com.example.libraryapi.model.Library;
-import com.example.libraryapi.util.ApiRequestUtil;
-import org.springframework.stereotype.Service;
-
 import java.util.List;
 import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreaker;
+import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
+import org.springframework.stereotype.Service;
+
+import com.example.libraryapi.dto.LibraryResponse;
+import com.example.libraryapi.model.Library;
+import com.example.libraryapi.util.ApiRequestUtil;
+
 @Service
 public class LibraryService {
+	
+	@Autowired
+	private CircuitBreakerFactory circuitBreakerFactory;
 
     private static final String API_URL = "https://data4library.kr/api/libSrchByBook";
     private static final String API_KEY = "246bc9a1a2ea4ba78b5ada1b16a0ba7e43537ef40b0427f80013629f7b593a86";
@@ -25,26 +32,38 @@ public class LibraryService {
         if (dtlRegion != null && !dtlRegion.isEmpty()) {
             urlBuilder.append("&dtl_region=").append(dtlRegion);
         }
-
-        try {
-            // OpenAPI 호출 및 데이터 가져오기
-            List<Library> libraries = ApiRequestUtil.getLibrariesFromApi(urlBuilder.toString());
-
-            // JSON 형식에 맞게 가공
-            List<LibraryResponse.LibraryWrapper> wrappedLibraries = libraries.stream()
-                    .map(lib -> new LibraryResponse.LibraryWrapper(lib))
-                    .collect(Collectors.toList());
-
-            return new LibraryResponse(
-                    String.valueOf(pageNo),             // 페이지 번호
-                    String.valueOf(pageSize),           // 페이지 크기
-                    libraries.size(),                   // 총 검색 결과 수
-                    wrappedLibraries.size(),            // 현재 페이지 결과 수
-                    wrappedLibraries                    // 도서관 목록
-            );
-
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to fetch libraries", e);
-        }
+        
+        CircuitBreaker circuitBreaker = circuitBreakerFactory.create("libraryApiCircuitBreaker");
+        
+        return circuitBreaker.run(() -> {
+	        try {
+	            // OpenAPI 호출 및 데이터 가져오기
+	            List<Library> libraries = ApiRequestUtil.getLibrariesFromApi(urlBuilder.toString());
+	
+	            // JSON 형식에 맞게 가공
+	            List<LibraryResponse.LibraryWrapper> wrappedLibraries = libraries.stream()
+	                    .map(lib -> new LibraryResponse.LibraryWrapper(lib))
+	                    .collect(Collectors.toList());
+	
+	            return new LibraryResponse(
+	                    String.valueOf(pageNo),             // 페이지 번호
+	                    String.valueOf(pageSize),           // 페이지 크기
+	                    libraries.size(),                   // 총 검색 결과 수
+	                    wrappedLibraries.size(),            // 현재 페이지 결과 수
+	                    wrappedLibraries                    // 도서관 목록
+	            );
+	        } catch (Exception e) {
+	            throw new RuntimeException("Failed to fetch libraries", e);
+	        }
+        }, throwable -> fallbackMethod(isbn, region, dtlRegion, pageNo, pageSize, throwable));
+    }
+    
+    private LibraryResponse fallbackMethod(String isbn, String region, String dtlRegion, int pageNo, int pageSize, Throwable throwable) {
+    	return new LibraryResponse(
+    			String.valueOf(pageNo),
+    			String.valueOf(pageSize),
+    			0,
+    			0,
+    			List.of());
     }
 }
